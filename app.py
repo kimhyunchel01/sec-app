@@ -15,6 +15,7 @@ import threading
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="미국 공시 조회", page_icon="📄", layout="centered")
@@ -277,6 +278,53 @@ def show_text_box(text: str, height: int = 450):
         "font-size:14px;line-height:1.6;padding:10px;border:1px solid #ddd;"
         f"border-radius:6px'>{html.escape(text)}</div>"
     )
+
+
+FULL_COPY_MAX = 400_000  # 문서 전체 복사를 제공하는 최대 글자 수
+
+
+def copy_button(text: str, label: str):
+    """누르면 text를 클립보드에 복사하는 버튼 (Streamlit 기본 버튼은 복사를 못 하므로 작은 웹 조각을 사용)"""
+    payload = json.dumps(text)  # 글자를 안전한 JS 문자열로 변환
+    payload = payload.replace("</", "<\\/").replace("<!--", "<\\!--")
+    label_js = json.dumps(label)
+    page = f"""
+<style>
+  html, body {{ margin: 0; padding: 0; background: transparent; }}
+  button {{
+    width: 100%; height: 40px; cursor: pointer;
+    font: 600 14px -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    color: #31333F; background: #f0f2f6;
+    border: 1px solid rgba(49, 51, 63, 0.25); border-radius: 8px;
+  }}
+  button:hover {{ border-color: #ff4b4b; color: #ff4b4b; }}
+</style>
+<button id="b" type="button"></button>
+<script>
+  const text = {payload};
+  const label = {label_js};
+  const btn = document.getElementById("b");
+  btn.textContent = label;
+  async function doCopy() {{
+    let ok = false;
+    try {{ await navigator.clipboard.writeText(text); ok = true; }} catch (e) {{}}
+    if (!ok) {{
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      try {{ ok = document.execCommand("copy"); }} catch (e) {{}}
+      document.body.removeChild(ta);
+    }}
+    btn.textContent = ok ? "✓ 복사됨" : "복사 실패 (아래 안내 참조)";
+    setTimeout(() => {{ btn.textContent = label; }}, 2000);
+  }}
+  btn.addEventListener("click", doCopy);
+</script>
+"""
+    try:
+        components.html(page, height=46)
+    except Exception:
+        st.caption("복사 버튼을 표시하지 못했습니다. 아래 '복사 버튼이 작동하지 않을 때'를 이용하십시오.")
 
 
 # ---------------- 한국어 번역·요약 (Claude API) ----------------
@@ -560,7 +608,19 @@ mode = st.radio("보기 방식", ["원문", "한국어 번역", "한국어 요�
 
 if mode == "원문":
     show_text_box(page_text)
-    st.caption(f"[SEC 원문 열기]({doc['url']})")
+    c1, c2, c3 = st.columns([1, 1.3, 1.5])
+    with c1:
+        copy_button(page_text, "📋 이 쪽 복사")
+    with c2:
+        if len(full_text) <= FULL_COPY_MAX:
+            copy_button(full_text, "📋 문서 전체 복사")
+        else:
+            st.caption("문서가 커서 전체 복사는 제공하지 않습니다. 쪽 단위로 복사하십시오.")
+    with c3:
+        st.caption(f"[SEC 원문 열기]({doc['url']})")
+    with st.expander("복사 버튼이 작동하지 않을 때"):
+        st.caption("아래 상자 오른쪽 위의 복사 아이콘을 누르십시오. (현재 쪽만 해당)")
+        st.code(page_text, language=None, wrap_lines=True)
 else:
     if not get_secret("ANTHROPIC_API_KEY"):
         st.info("번역·요약 기능이 아직 설정되지 않았습니다. (관리자: Secrets에 ANTHROPIC_API_KEY 입력)")
